@@ -4,39 +4,59 @@ services:
   db:
     image: timescale/timescaledb:latest-pg15
     container_name: stock_db
+    env_file:
+      - .env
     environment:
-      - POSTGRES_DB=stock_data
-      - POSTGRES_USER=admin
-      - POSTGRES_PASSWORD=password123
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
     ports:
-      - "5432:5432"
+      - "${DB_PORT:-5432}:5432"
     volumes:
       - stock_db_data:/var/lib/postgresql/data
+      - ./init_db.sql:/docker-entrypoint-initdb.d/init_db.sql
     restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   backend:
     build: .
     container_name: stock_backend
+    env_file:
+      - .env
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     command: python backend_etl.py
     restart: always
     environment:
       - DB_HOST=db
       - NO_PROXY=*
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - REFRESH_INTERVAL=${REFRESH_INTERVAL:-10}
+      - BATCH_SIZE=${BATCH_SIZE:-50}
+      - REQUEST_TIMEOUT=${REQUEST_TIMEOUT:-5}
+      - RETRY_COUNT=${RETRY_COUNT:-3}
 
   web:
     build: .
     container_name: stock_web
     ports:
       - "8501:8501"
+    env_file:
+      - .env
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     command: streamlit run app_web.py --server.port=8501 --server.address=0.0.0.0
     restart: always
     environment:
       - DB_HOST=db
       - NO_PROXY=*
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
 
 volumes:
   stock_db_data:
