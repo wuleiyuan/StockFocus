@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  db:
+    image: timescale/timescaledb:latest-pg15
+    container_name: stock_db
+    environment:
+      - POSTGRES_DB=stock_data
+      - POSTGRES_USER=admin
+      - POSTGRES_PASSWORD=password123
+    ports:
+      - "5432:5432"
+    volumes:
+      - stock_db_data:/var/lib/postgresql/data
+    restart: always
+
+  backend:
+    build: .
+    container_name: stock_backend
+    depends_on:
+      - db
+    command: python backend_etl.py
+    restart: always
+    environment:
+      - DB_HOST=db
+      - NO_PROXY=*
+
+  web:
+    build: .
+    container_name: stock_web
+    ports:
+      - "8501:8501"
+    depends_on:
+      - db
+    command: streamlit run app_web.py --server.port=8501 --server.address=0.0.0.0
+    restart: always
+    environment:
+      - DB_HOST=db
+      - NO_PROXY=*
+
+volumes:
+  stock_db_data:
