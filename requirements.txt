@@ -10,3 +10,5 @@ python-dotenv>=1.0.0
 sqlalchemy>=2.0.0
 httpx>=0.24.0
 tenacity>=8.2.0
+matplotlib>=3.7.0
+seaborn>=0.12.0
