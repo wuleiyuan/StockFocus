@@ -19,12 +19,13 @@ class ReportPDF(FPDF):
 
 class PDFReportGenerator:
     FONT_PATHS = [
+        '/System/Library/Fonts/STHeiti Light.ttc',
+        '/System/Library/Fonts/Supplemental/Songti.ttc',
+        '/System/Library/Fonts/Hiragino Sans GB.ttc',
+        '/System/Library/Fonts/AppleSDGothicNeo.ttc',
         '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc',
         '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc',
-        'simhei.ttf',
-        'msyh.ttc',
         '/System/Library/Fonts/PingFang.ttc',
-        '/System/Library/Fonts/STHeiti Light.ttc'
     ]
     
     @classmethod
