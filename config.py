@@ -179,13 +179,25 @@ config = Config()
 database = DatabaseManager(config)
 
 def get_db_engine():
-    """获取数据库引擎的便捷函数"""
     return database.engine
 
 def setup_network_config():
-    """设置网络配置"""
-    # 清除代理环境变量，确保本地直连
     for k in list(os.environ.keys()):
         if "proxy" in k.lower():
             os.environ.pop(k, None)
     os.environ["NO_PROXY"] = config.NO_PROXY
+
+_config = None
+_database = None
+
+def get_config():
+    global _config
+    if _config is None:
+        _config = Config()
+    return _config
+
+def get_database():
+    global _database
+    if _database is None:
+        _database = DatabaseManager(get_config())
+    return _database

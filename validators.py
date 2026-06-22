@@ -46,8 +46,8 @@ class DataValidator:
     def validate_bias(bias: Any) -> Tuple[bool, Optional[str]]:
         try:
             b = float(bias)
-            if b < -100 or b > 1000:
-                return False, "Bias seems unrealistic"
+            if b < -50 or b > 500:
+                return False, "Bias out of expected range (-50% to 500%)"
             return True, None
         except (TypeError, ValueError):
             return False, "Bias must be a number"

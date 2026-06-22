@@ -13,6 +13,32 @@ CREATE TABLE IF NOT EXISTS market_scan_results (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- 创建自选股表
+CREATE TABLE IF NOT EXISTS watchlist (
+    symbol VARCHAR(10) PRIMARY KEY,
+    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 创建搜索历史表
+CREATE TABLE IF NOT EXISTS search_history (
+    id SERIAL PRIMARY KEY,
+    symbol VARCHAR(10) NOT NULL,
+    searched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 自动记录搜索历史
+CREATE OR REPLACE FUNCTION record_search()
+RETURNS TRIGGER AS $$
+BEGIN
+    INSERT INTO search_history (symbol) VALUES (NEW.symbol);
+    RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+CREATE TRIGGER watchlist_search_history
+    AFTER INSERT ON watchlist
+    FOR EACH ROW EXECUTE FUNCTION record_search();
+
 -- 创建索引
 CREATE INDEX IF NOT EXISTS idx_bias ON market_scan_results(bias);
 CREATE INDEX IF NOT EXISTS idx_roe_5y ON market_scan_results(roe_5y);

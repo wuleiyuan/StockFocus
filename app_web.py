@@ -6,6 +6,7 @@ import streamlit as st
 import pandas as pd
 import time
 import warnings
+import logging
 from datetime import datetime
 from typing import Dict, Any
 from plotly.subplots import make_subplots
@@ -17,7 +18,20 @@ from sqlalchemy import text
 from config import config, setup_network_config, get_db_engine
 from stock_api import EastMoneyAPI
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=3600)
+def get_stock_list() -> list:
+    try:
+        engine = get_db_engine()
+        df = pd.read_sql("SELECT symbol, name FROM market_scan_results", engine)
+        return [(f"{row['symbol']} - {row['name']}", row['symbol']) for _, row in df.iterrows()]
+    except:
+        return []
+
+def search_stocks(query: str) -> list:
+    stocks = get_stock_list()
+    if not query:
+        return []
+    return [s[0] for s in stocks if query in s[0]][:10]
 def get_cached_stock_data(symbols: list) -> pd.DataFrame:
     if not symbols:
         return pd.DataFrame()
@@ -28,7 +42,6 @@ def get_cached_stock_data(symbols: list) -> pd.DataFrame:
         query = f"SELECT * FROM market_scan_results WHERE symbol IN ({placeholders})"
         return pd.read_sql(text(query), engine, params=params).fillna(0)
     except Exception as e:
-        import logging
         logging.getLogger(__name__).error(f"获取数据失败: {e}")
         return pd.DataFrame()
 
@@ -63,11 +76,10 @@ class StockDataService:
         if df.empty:
             return df
         
-        needs_update = (df['current_price'].sum() == 0) or st.sidebar.button("⚡ 强制刷新数据")
+        needs_update = (df['current_price'].sum() == 0) or st.sidebar.button("⚡ 强制刷新数据", key="force_refresh")
         
         if needs_update:
             get_cached_stock_data.clear()
-            get_cached_stock_data(df['symbol'].tolist())
             
             with st.spinner("🚀 正在更新实时数据..."):
                 try:
@@ -206,13 +218,53 @@ def main():
     with st.sidebar:
         st.header("⚙️ 投研控制台")
         
+        # 从数据库加载自选股
+        engine = get_db_engine()
+        try:
+            watchlist_df = pd.read_sql("SELECT symbol FROM watchlist ORDER BY added_at DESC", engine)
+            default_watchlist = ",".join(watchlist_df['symbol'].tolist()) if not watchlist_df.empty else "600519,000858,603288"
+        except:
+            default_watchlist = "600519,000858,603288"
+        
         user_input = st.text_area(
             "自选股票池", 
-            "600519,000858,603288",
+            default_watchlist,
             help="输入股票代码，用逗号分隔"
         )
         
         watchlist = [c.strip() for c in user_input.replace('\n', ',').split(',') if c.strip()]
+        
+        # 添加到自选池
+        search_result = st.text_input("搜索股票", placeholder="输入股票代码或名称搜索")
+        if search_result:
+            matches = search_stocks(search_result)
+            if matches:
+                st.write("搜索结果:")
+                for match in matches:
+                    st.code(match)
+        
+        new_symbols = st.text_input("手动添加股票", placeholder="输入股票代码")
+        if st.button("➕ 添加"):
+            if new_symbols and new_symbols.strip():
+                symbol = new_symbols.strip()
+                if symbol not in watchlist:
+                    try:
+                        with engine.begin() as conn:
+                            conn.execute(text("INSERT INTO watchlist (symbol) VALUES (:s) ON CONFLICT DO NOTHING"), {"s": symbol})
+                        st.success(f"✅ 已添加 {symbol}")
+                    except Exception as e:
+                        st.error(f"添加失败: {e}")
+        
+        # 删除自选股
+        if watchlist:
+            delete_symbol = st.selectbox("删除股票", [""] + watchlist)
+            if st.button("🗑️ 删除") and delete_symbol:
+                try:
+                    with engine.begin() as conn:
+                        conn.execute(text("DELETE FROM watchlist WHERE symbol = :s"), {"s": delete_symbol})
+                    st.success(f"✅ 已删除 {delete_symbol}")
+                except Exception as e:
+                    st.error(f"删除失败: {e}")
         
         st.markdown("---")
         st.markdown("### 数据刷新设置")
@@ -300,13 +352,14 @@ def main():
                 
                 table_cols = ['symbol', 'name', 'current_price', 'fair_price', 'bias', 'roe_5y', 'action', 'industry']
                 display_df = df[table_cols].copy()
+                display_df.columns = ['代码', '名称', '现价', '合理价', '偏差%', 'ROE%', '操作', '行业']
                 
                 styled = display_df.style.format({
-                    'current_price': '¥{:.2f}',
-                    'fair_price': '¥{:.2f}',
-                    'bias': '{:+.2f}%',
-                    'roe_5y': '{:.1f}%'
-                }).applymap(lambda x: 'background-color: #c6efce; color: #006100' if x < -15 else ('background-color: #ffc7ce; color: #9c0006' if x > 20 else ''), subset=['bias']).applymap(color_action, subset=['action'])
+                    '现价': '¥{:.2f}',
+                    '合理价': '¥{:.2f}',
+                    '偏差%': '{:+.2f}%',
+                    'ROE%': '{:.1f}%'
+                }).applymap(lambda x: 'background-color: #c6efce; color: #006100' if x < -15 else ('background-color: #ffc7ce; color: #9c0006' if x > 20 else ''), subset=['偏差%']).applymap(color_action, subset=['操作'])
                 
                 st.dataframe(styled, use_container_width=True, height=400)
             
@@ -578,36 +631,74 @@ def main():
             except Exception as e:
                 st.error(f"风险分析计算失败: {e}")
                 logger.error(f"风险分析错误: {e}")
+        
+        with t5:
+            st.subheader("📄 报告导出")
             
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                if st.button("📄 生成投研日报 (PDF)"):
-                    with st.spinner("正在生成PDF报告..."):
-                        filename = PDFReportGenerator.generate_report(df)
-                        if filename:
-                            st.success(f"✅ 报告已生成: {filename}")
-                            with open(filename, "rb") as f:
-                                st.download_button(
-                                    "⬇️ 下载报告",
-                                    f,
-                                    file_name=filename,
-                                    mime="application/pdf"
-                                )
-            
-            with col2:
-                if st.button("📊 导出Excel数据"):
-                    excel_filename = f"StockFocus_Data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-                    csv_data = df.to_csv(index=False)
-                    st.download_button(
-                        "⬇️ 下载CSV",
-                        csv_data,
-                        file_name=excel_filename,
-                        mime="text/csv"
-                    )
+            if df.empty:
+                st.warning("暂无数据，请先添加自选股")
+            else:
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.markdown("### 📑 PDF 报告")
+                    if st.button("📄 生成投研日报 (PDF)"):
+                        with st.spinner("正在生成PDF报告..."):
+                            filename = PDFReportGenerator.generate_report(df)
+                            if filename:
+                                st.success(f"✅ 报告已生成: {filename}")
+                                with open(filename, "rb") as f:
+                                    st.download_button(
+                                        "⬇️ 下载报告",
+                                        f,
+                                        file_name=filename,
+                                        mime="application/pdf"
+                                    )
+                
+                with col2:
+                    st.markdown("### 📊 数据导出")
+                    
+                    export_format = st.radio("选择格式", ["CSV", "Excel"], horizontal=True)
+                    
+                    if export_format == "CSV":
+                        csv_data = df.to_csv(index=False)
+                        st.download_button(
+                            "⬇️ 下载CSV",
+                            csv_data,
+                            file_name=f"StockFocus_Data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                            mime="text/csv"
+                        )
+                    else:
+                        try:
+                            import io
+                            buffer = io.BytesIO()
+                            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                                df.to_excel(writer, index=False, sheet_name='StockData')
+                            st.download_button(
+                                "⬇️ 下载Excel",
+                                buffer.getvalue(),
+                                file_name=f"StockFocus_Data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                            )
+                        except Exception as e:
+                            st.error(f"Excel导出失败: {e}")
     
     else:
-        st.warning("📝 请在左侧输入股票代码开始分析")
+        st.markdown("""
+        <div style="text-align: center; padding: 50px;">
+            <h2>📊 StockFocus Pro</h2>
+            <p>暂无数据，请先添加自选股</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("总股票数", 0)
+        with col2:
+            st.metric("黄金坑", 0)
+        with col3:
+            st.metric("高估股票", 0)
+        
         st.info("💡 提示：您可以输入如 600519,000858,603288 这样的股票代码")
 
 if __name__ == "__main__":

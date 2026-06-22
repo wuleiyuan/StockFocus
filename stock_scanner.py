@@ -50,17 +50,24 @@ class StockScanner:
         """分析单只股票的ROE指标"""
         try:
             # 获取财务指标数据
-            df = ak.stock_financial_analysis_indicator(symbol=code)
+            df = ak.stock_financial_analysis_indicator(symbol=code, start_year=str(datetime.now().year - years))
             
             if df is None or df.empty:
                 return None
             
-            # 提取ROE数据
-            if 'ROE(%)' in df.columns:
-                roe_data = df['ROE(%)'].dropna().head(years)
+            # 提取ROE数据 - akshare 返回的中文列名
+            roe_col = None
+            for col in ['净资产收益率(%)', 'ROE(%)']:
+                if col in df.columns:
+                    roe_col = col
+                    break
+            
+            if roe_col:
+                roe_data = df[roe_col].dropna().head(years)
                 roe_values = [self.clean_numeric_value(val) for val in roe_data]
                 
-                if len(roe_values) >= years:
+                min_required_years = max(5, years // 2)
+                if len(roe_values) >= min_required_years:
                     avg_roe = sum(roe_values) / len(roe_values)
                     min_roe = min(roe_values)
                     
@@ -91,13 +98,13 @@ class StockScanner:
     
     def calculate_fair_price(self, code: str, avg_roe: float, industry: str = None) -> Optional[Dict]:
         try:
-            df = ak.stock_financial_analysis_indicator(symbol=code)
+            df = ak.stock_financial_analysis_indicator(symbol=code, start_year=str(datetime.now().year - 2))
             if df is None or df.empty:
                 return None
             
             eps_field = None
-            for col in df.columns:
-                if 'EPS' in col and '基本每股收益' in col:
+            for col in ['摊薄每股收益(元)', '加权每股收益(元)', '每股收益_调整后(元)']:
+                if col in df.columns:
                     eps_field = col
                     break
             
